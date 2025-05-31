@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>S3 Web App</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom styles for Inter font */
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Basic styling for file input to make it look better with Tailwind */
+        input[type="file"]::file-selector-button {
+            @apply bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-full cursor-pointer;
+            border: none;
+            outline: none;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen flex items-center justify-center p-4">
+    <div class="bg-white p-8 rounded-xl shadow-lg w-full max-w-2xl">
+        <h1 class="text-3xl font-bold text-center text-gray-800 mb-8">S3 Web Application</h1>
+
+        <div class="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
+            <label for="backendUrl" class="block text-sm font-medium text-blue-700 mb-2">
+                Backend URL (e.g., http://your-ec2-public-ip:3000)
+            </label>
+            <input type="text" id="backendUrl" value="http://34.200.220.36:3000"
+                   class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                   placeholder="Enter your backend URL here">
+            <p class="mt-2 text-xs text-blue-600">
+                Change this to your EC2 instance's public IP address and port (e.g., `http://54.123.45.67:3000`) after deployment.
+            </p>
+        </div>
+
+        <div class="mb-8 p-6 bg-gray-50 rounded-lg shadow-inner">
+            <h2 class="text-2xl font-semibold text-gray-700 mb-4">List Objects</h2>
+            <button id="listObjectsBtn"
+                    class="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50 transition duration-150 ease-in-out">
+                List Objects in Bucket
+            </button>
+            <div id="listObjectsOutput" class="mt-4 text-gray-700 text-sm bg-white p-3 rounded-md border border-gray-200 h-40 overflow-y-auto">
+                <p class="text-gray-500">No objects listed yet.</p>
+            </div>
+        </div>
+
+        <div class="mb-8 p-6 bg-gray-50 rounded-lg shadow-inner">
+            <h2 class="text-2xl font-semibold text-gray-700 mb-4">Upload Object</h2>
+            <input type="file" id="uploadFile"
+                   class="block w-full text-sm text-gray-900 border border-gray-300 rounded-lg cursor-pointer bg-gray-50 focus:outline-none mb-4">
+            <button id="uploadBtn"
+                    class="w-full bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-2 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:ring-opacity-50 transition duration-150 ease-in-out">
+                Upload File to S3
+            </button>
+            <p id="uploadMessage" class="mt-2 text-sm text-center text-gray-600"></p>
+        </div>
+
+        <div class="mb-8 p-6 bg-gray-50 rounded-lg shadow-inner">
+            <h2 class="text-2xl font-semibold text-gray-700 mb-4">Retrieve Object</h2>
+            <input type="text" id="objectKeyInput" placeholder="Enter object key (e.g., my-file.txt)"
+                   class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm mb-4">
+            <button id="retrieveBtn"
+                    class="w-full bg-purple-500 hover:bg-purple-600 text-white font-bold py-2 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-opacity-50 transition duration-150 ease-in-out">
+                Retrieve Object from S3
+            </button>
+            <p id="retrieveMessage" class="mt-2 text-sm text-center text-gray-600"></p>
+        </div>
+
+        <div id="statusMessage" class="mt-6 p-3 rounded-lg text-center text-sm font-medium hidden"></div>
+
+    </div>
+
+    <script>
+        // Ensure the DOM is fully loaded before trying to access elements
+        document.addEventListener('DOMContentLoaded', () => {
+            const backendUrlInput = document.getElementById('backendUrl');
+            const listObjectsBtn = document.getElementById('listObjectsBtn');
+            const listObjectsOutput = document.getElementById('listObjectsOutput');
+            const uploadFile = document.getElementById('uploadFile');
+            const uploadBtn = document.getElementById('uploadBtn');
+            const uploadMessage = document.getElementById('uploadMessage');
+            const objectKeyInput = document.getElementById('objectKeyInput');
+            const retrieveBtn = document.getElementById('retrieveBtn');
+            const retrieveMessage = document.getElementById('retrieveMessage');
+            const statusMessage = document.getElementById('statusMessage');
+
+            // Defensive check: Log an error if statusMessage is still null (shouldn't happen with DOMContentLoaded)
+            if (!statusMessage) {
+                console.error("Initialization Error: 'statusMessage' element not found in the DOM. Status messages will not be displayed.");
+                // You might consider creating a fallback element here if this error persists.
+            }
+
+            // Function to display status messages
+            function showStatus(message, type = 'info') {
+                // Ensure statusMessage is not null before trying to set properties
+                if (statusMessage) {
+                    statusMessage.textContent = message;
+                    statusMessage.classList.remove('hidden', 'bg-green-100', 'text-green-800', 'bg-red-100', 'text-red-800', 'bg-blue-100', 'text-blue-800');
+                    if (type === 'success') {
+                        statusMessage.classList.add('bg-green-100', 'text-green-800');
+                    } else if (type === 'error') {
+                        statusMessage.classList.add('bg-red-100', 'text-red-800');
+                    } else { // info
+                        statusMessage.classList.add('bg-blue-100', 'text-blue-800');
+                    }
+                    statusMessage.classList.remove('hidden');
+                    setTimeout(() => {
+                        statusMessage.classList.add('hidden');
+                    }, 5000); // Hide after 5 seconds
+                } else {
+                    console.warn("Attempted to show status, but statusMessage element is missing. Message: " + message);
+                }
+            }
+
+            // --- List Objects ---
+            listObjectsBtn.addEventListener('click', async () => {
+                const backendUrl = backendUrlInput.value;
+                listObjectsOutput.innerHTML = '<p class="text-gray-500">Loading objects...</p>';
+                showStatus('Listing objects...', 'info');
+                try {
+                    const response = await fetch(`${backendUrl}/api/s3/list-objects`);
+                    const data = await response.json();
+
+                    if (data.success) {
+                        if (data.objects && data.objects.length > 0) {
+                            listObjectsOutput.innerHTML = '<ul class="list-disc pl-5 space-y-1"></ul>';
+                            const ul = listObjectsOutput.querySelector('ul');
+                            data.objects.forEach(obj => {
+                                const li = document.createElement('li');
+                                li.textContent = `${obj.Key} (Size: ${obj.Size} bytes, Last Modified: ${new Date(obj.LastModified).toLocaleString()})`;
+                                ul.appendChild(li);
+                            });
+                            showStatus('Objects listed successfully!', 'success');
+                        } else {
+                            listObjectsOutput.innerHTML = '<p class="text-gray-500">No objects found in the bucket.</p>';
+                            showStatus('No objects found.', 'info');
+                        }
+                    } else {
+                        listObjectsOutput.innerHTML = `<p class="text-red-500">Error: ${data.message || 'Unknown error'}</p>`;
+                        showStatus(`Error listing objects: ${data.message}`, 'error');
+                    }
+                } catch (error) {
+                    console.error('Error fetching list of objects:', error);
+                    listObjectsOutput.innerHTML = `<p class="text-red-500">Network error or backend not reachable: ${error.message}</p>`;
+                    showStatus(`Network error: ${error.message}`, 'error');
+                }
+            });
+
+            // --- Upload Object ---
+            uploadBtn.addEventListener('click', async () => {
+                const backendUrl = backendUrlInput.value;
+                const file = uploadFile.files[0];
+                if (!file) {
+                    uploadMessage.textContent = 'Please select a file to upload.';
+                    uploadMessage.className = 'mt-2 text-sm text-center text-red-600';
+                    showStatus('No file selected for upload.', 'error');
+                    return;
+                }
+
+                uploadMessage.textContent = 'Uploading...';
+                uploadMessage.className = 'mt-2 text-sm text-center text-blue-600';
+                showStatus('Uploading file...', 'info');
+
+                const formData = new FormData();
+                formData.append('file', file);
+
+                try {
+                    const response = await fetch(`${backendUrl}/api/s3/upload`, {
+                        method: 'POST',
+                        body: formData,
+                    });
+                    const data = await response.json();
+
+                    if (data.success) {
+                        uploadMessage.textContent = data.message;
+                        uploadMessage.className = 'mt-2 text-sm text-center text-green-600';
+                        showStatus('File uploaded successfully!', 'success');
+                        uploadFile.value = ''; // Clear the file input
+                    } else {
+                        uploadMessage.textContent = `Error: ${data.message}`;
+                        uploadMessage.className = 'mt-2 text-sm text-center text-red-600';
+                        showStatus(`Error uploading file: ${data.message}`, 'error');
+                    }
+                } catch (error) {
+                    console.error('Error uploading file:', error);
+                    uploadMessage.textContent = `Network error or backend not reachable: ${error.message}`;
+                    uploadMessage.className = 'mt-2 text-sm text-center text-red-600';
+                    showStatus(`Network error: ${error.message}`, 'error');
+                }
+            });
+
+            // --- Retrieve Object ---
+            retrieveBtn.addEventListener('click', async () => {
+                const backendUrl = backendUrlInput.value;
+                const objectKey = objectKeyInput.value.trim();
+                if (!objectKey) {
+                    retrieveMessage.textContent = 'Please enter an object key.';
+                    retrieveMessage.className = 'mt-2 text-sm text-center text-red-600';
+                    showStatus('No object key entered for retrieval.', 'error');
+                    return;
+                }
+
+                retrieveMessage.textContent = 'Retrieving...';
+                retrieveMessage.className = 'mt-2 text-sm text-center text-blue-600';
+                showStatus('Retrieving object...', 'info');
+
+                try {
+                    // We fetch the object directly to trigger a download
+                    const response = await fetch(`${backendUrl}/api/s3/get-object/${encodeURIComponent(objectKey)}`);
+
+                    if (response.ok) {
+                        // If the response is OK, the browser will handle the download due to Content-Disposition header
+                        const blob = await response.blob();
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = objectKey; // Use the object key as the download filename
+                        document.body.appendChild(a);
+                        a.click();
+                        a.remove();
+                        window.URL.revokeObjectURL(url);
+
+                        retrieveMessage.textContent = `Object '${objectKey}' retrieved. Check your downloads.`;
+                        retrieveMessage.className = 'mt-2 text-sm text-center text-green-600';
+                        showStatus('Object retrieved successfully!', 'success');
+                    } else {
+                        const errorData = await response.json(); // Try to parse error message from backend
+                        retrieveMessage.textContent = `Error: ${errorData.message || response.statusText}`;
+                        retrieveMessage.className = 'mt-2 text-sm text-center text-red-600';
+                        showStatus(`Error retrieving object: ${errorData.message || response.statusText}`, 'error');
+                    }
+                } catch (error) {
+                    console.error('Error retrieving object:', error);
+                    retrieveMessage.textContent = `Network error or backend not reachable: ${error.message}`;
+                    retrieveMessage.className = 'mt-2 text-sm text-center text-red-600';
+                    showStatus(`Network error: ${error.message}`, 'error');
+                }
+            });
+        });
+    </script>
+</body>
+</html>
